@@ -1,0 +1,13 @@
+import ollama
+
+response = ollama.list()
+print("Response type:", type(response))
+print("Raw response:", response)
+
+# Works for both old and new SDK
+if hasattr(response, "models"):
+    for m in response.models:
+        print("Model found:", m.name)
+elif isinstance(response, dict):
+    for m in response.get("models", []):
+        print("Model found:", m.get("name"))
