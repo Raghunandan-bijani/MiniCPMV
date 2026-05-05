@@ -2,12 +2,15 @@ import ollama
 
 response = ollama.list()
 print("Response type:", type(response))
-print("Raw response:", response)
 
-# Works for both old and new SDK
+# Works for ALL versions
 if hasattr(response, "models"):
+    print(f"Found {len(response.models)} model(s):\n")
     for m in response.models:
-        print("Model found:", m.name)
-elif isinstance(response, dict):
-    for m in response.get("models", []):
-        print("Model found:", m.get("name"))
+        # Use getattr with fallback - works on ANY object or dict
+        name = getattr(m, "name", None) or getattr(m, "model", None)
+        size = getattr(m, "size", "unknown")
+        print(f"  Model : {name}")
+        print(f"  Size  : {size}")
+        print(f"  Type  : {type(m)}")
+        print()
