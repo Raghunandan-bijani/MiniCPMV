@@ -1,16 +1,19 @@
-import ollama
+def check_model_available(model_name: str) -> bool:
+    """Check whether the model is already pulled in Ollama.
+    Compatible with new Ollama SDK where models are objects not dicts.
+    """
+    try:
+        response   = ollama.list()
+        model_list = response.models        # your SDK: always an object
 
-response = ollama.list()
-print("Response type:", type(response))
+        for m in model_list:
+            # object attribute access — confirmed working on your system
+            name = getattr(m, "name", "") or getattr(m, "model", "")
+            print(f"  Checking: {name}")
+            if model_name.lower() in str(name).lower():
+                return True
+        return False
 
-# Works for ALL versions
-if hasattr(response, "models"):
-    print(f"Found {len(response.models)} model(s):\n")
-    for m in response.models:
-        # Use getattr with fallback - works on ANY object or dict
-        name = getattr(m, "name", None) or getattr(m, "model", None)
-        size = getattr(m, "size", "unknown")
-        print(f"  Model : {name}")
-        print(f"  Size  : {size}")
-        print(f"  Type  : {type(m)}")
-        print()
+    except Exception as e:
+        print(f"  [!] Could not check models: {e}")
+        return False
