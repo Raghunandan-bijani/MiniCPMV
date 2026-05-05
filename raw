@@ -1,19 +1,47 @@
-def check_model_available(model_name: str) -> bool:
-    """Check whether the model is already pulled in Ollama.
-    Compatible with new Ollama SDK where models are objects not dicts.
-    """
-    try:
-        response   = ollama.list()
-        model_list = response.models        # your SDK: always an object
+SYSTEM_PROMPT = """You are an expert document analyst specializing in table extraction.
 
-        for m in model_list:
-            # object attribute access — confirmed working on your system
-            name = getattr(m, "name", "") or getattr(m, "model", "")
-            print(f"  Checking: {name}")
-            if model_name.lower() in str(name).lower():
-                return True
-        return False
+Your responsibilities:
+• Extract ONLY tabular data from document images
+• Return responses in ONLY valid JSON format
+• Never add explanations, markdown, or commentary
+• Preserve all values exactly as they appear
+• Handle both single and multi-row headers intelligently
+• Maintain data hierarchy and structure
+• Flag unclear data appropriately
 
-    except Exception as e:
-        print(f"  [!] Could not check models: {e}")
-        return False
+Extraction quality is paramount — prioritize accuracy over speed.
+"""
+
+USER_PROMPT = """Analyze this document page and extract all tables present.
+
+For each table identified:
+• Table Title: Extract the exact title if visible, use empty string if none
+• Column Headers: 
+  - Merge multi-row headers into single strings
+  - Use " / " as separator when joining (e.g., "Category / 2024")
+  - Preserve exact header text
+• Data Rows:
+  - Extract every row including sub-items and hierarchical entries
+  - Maintain numbering, lettering, and formatting (1., a., i., etc.)
+  - Keep all numeric precision (decimals, negative signs, zeros)
+  - Use "?" for unreadable or corrupted values
+  - Never guess or round values
+
+Return ONLY valid JSON in this exact structure:
+{
+  "tables": [
+    {
+      "title": "table title or empty string",
+      "headers": ["header1", "header2 / sub-header", "header3"],
+      "rows": [
+        ["value1", "value2", "value3"],
+        ["value1", "value2", "value3"]
+      ]
+    }
+  ]
+}
+
+If no table found: {"tables": []}
+
+CRITICAL: Output ONLY JSON. No markdown fences, no explanations.
+"""
