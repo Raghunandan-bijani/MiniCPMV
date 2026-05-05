@@ -8,6 +8,8 @@ import pandas as pd
 from PIL import Image
 import io
 import time
+import cv2
+import numpy as np
 from datetime import datetime
 from openpyxl.styles import Font, PatternFill, Alignment
 
@@ -21,21 +23,40 @@ from openpyxl.styles import Font, PatternFill, Alignment
 # ──────────────────────────────────────────────────────────────────
 # 0.  CONFIGURATION  (only section you need to edit)
 # ──────────────────────────────────────────────────────────────────
-PDF_PATH      = "IMAGE_PDF.pdf"          # <- your PDF file path
-OUTPUT_FOLDER = "output_tables"          # <- folder for CSVs + Excel
+#PDF_PATH      = "IMAGE_PDF.pdf"          # <- your PDF file path
+OUTPUT_FOLDER = "C:/Users/Raghunandan/OneDrive/Desktop/Data_Engineer/Generative AI/Image_AI_application/extracted_tables"          # <- folder for CSVs + Excel
 EXCEL_NAME    = "Kharif_Extracted.xlsx"  # <- final Excel file name
+PDF_PATH       = "C:/Users/Raghunandan/OneDrive/Desktop/Data_Engineer/Generative AI/single_page_output.pdf"         # Path to your input PDF
 OLLAMA_MODEL  = "minicpm-v"              # <- model name in Ollama
 DPI           = 200                      # <- render resolution (150-300)
-MAX_TOKENS    = 4096                     # <- max tokens per response
-TEMPERATURE  = 0.1                       # <- low = more deterministic
+MAX_TOKENS    = 15000                     # <- max tokens per response
+TEMPERATURE  = 0.05                       # <- low = more deterministic
 
 
 # ──────────────────────────────────────────────────────────────────
 # 1.  EXTRACTION PROMPT
 #     Instructs MiniCPM-V exactly what to extract and how
 # ──────────────────────────────────────────────────────────────────
+SYSTEM_PROMPT = """You are a highly accurate document table extraction engine.
+
+Your job is STRICT structured extraction — NOT interpretation.
+
+CRITICAL RULES:
+- You must ONLY output valid JSON.
+- Never explain anything.
+- Never summarize.
+- Never skip rows or columns.
+- Never guess values — extract exactly what is visible.
+- Preserve exact structure, including empty cells.
+
+If output is incomplete due to limits, still return valid JSON.
+
+You are not a chatbot. You are a data extraction system.
+"""
+
 EXTRACTION_PROMPT = """You are a precise agricultural data table extractor.
 Carefully look at this document image and extract ALL tables visible.
+Handle the table rotation also.
 
 Return ONLY the following JSON format — no extra text, no markdown:
 {
@@ -57,8 +78,8 @@ STRICT EXTRACTION RULES:
       - Negatives : -1.77   not  1.77
       - Zeros     : 0.00    not  blank
 2.  Keep row hierarchy intact
-      - Main rows : "1. Total Cereals"
-      - Sub rows  : "a. Rice", "b. Wheat", "c. Maize"
+      - Main rows 
+      - Sub rows  
 3.  Multi-level column headers -> join with " > "
       - Example   : "Area Sown > 2024", "Area Sown > 2023"
 4.  If a cell spans multiple columns, repeat the value
@@ -68,6 +89,55 @@ STRICT EXTRACTION RULES:
 8.  If no table is found on page return: {"tables": []}
 """
 
+def get_text_orientation_score(image):
+    import cv2
+    import numpy as np
+
+    # Convert if needed
+    if not isinstance(image, np.ndarray):
+        image = np.array(image)
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
+
+    horizontal_sum = np.sum(thresh, axis=1)
+    score = np.var(horizontal_sum)
+
+    return score, horizontal_sum
+
+def auto_rotate(image):
+    import cv2
+    import numpy as np
+    from PIL import Image
+
+    # ✅ Convert PIL → OpenCV (NumPy)
+    if isinstance(image, Image.Image):
+        img = np.array(image)
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+    else:
+        img = image
+
+    # Generate rotations
+    candidates = [
+        img,
+        cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE),
+        cv2.rotate(img, cv2.ROTATE_180),
+        cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    ]
+
+    best_img = img
+    best_score = -1
+
+    for c in candidates:
+        score, _ = get_text_orientation_score(c)
+        if score > best_score:
+            best_score = score
+            best_img = c
+
+    # ✅ Convert back OpenCV → PIL
+    best_img = cv2.cvtColor(best_img, cv2.COLOR_BGR2RGB)
+    return Image.fromarray(best_img)
 
 # ──────────────────────────────────────────────────────────────────
 # 2.  HELPER UTILITIES
@@ -208,11 +278,17 @@ def extract_tables_from_page(
     try:
         response = ollama.chat(
             model    = model,
-            messages = [{
-                "role"   : "user",
-                "content": EXTRACTION_PROMPT,
-                "images" : [img_b64],
-            }],
+            messages = [
+        {
+        "role": "system",
+        "content": SYSTEM_PROMPT
+        },
+        {
+        "role": "user",
+        "content": EXTRACTION_PROMPT,
+        "images": [img_b64],
+        }
+        ],
             options  = {
                 "temperature" : temperature,
                 "num_predict" : max_tokens,
@@ -372,16 +448,6 @@ def main():
         return
     print("  [OK] Ollama server is running")
 
-    if not check_model_available(OLLAMA_MODEL):
-        print(f"  [!] Model '{OLLAMA_MODEL}' not found locally.")
-        answer = input(f"  Pull '{OLLAMA_MODEL}' now? (~8 GB download) [y/n]: ")
-        if answer.strip().lower() == "y":
-            print(f"  Pulling {OLLAMA_MODEL} — please wait ...")
-            os.system(f"ollama pull {OLLAMA_MODEL}")
-        else:
-            print(f"  Run manually:  ollama pull {OLLAMA_MODEL}")
-            return
-    print(f"  [OK] Model '{OLLAMA_MODEL}' is ready")
 
     # ── STEP 1 : RENDER PDF PAGES ─────────────────────────────────
     banner("STEP 1 — Rendering PDF to images")
@@ -402,12 +468,15 @@ def main():
         page_start = time.time()
         print(f"\n  -- Page {i}/{total_pages} --")
 
+        # ✅ Apply rotation before sending to model
+        rotated_img = auto_rotate(page_img)
+
         tables = extract_tables_from_page(
-            page_img    = page_img,
-            page_num    = i,
-            model       = OLLAMA_MODEL,
-            max_tokens  = MAX_TOKENS,
-            temperature = TEMPERATURE,
+        page_img    = rotated_img,
+        page_num    = i,
+        model       = OLLAMA_MODEL,
+        max_tokens  = MAX_TOKENS,
+        temperature = TEMPERATURE,
         )
 
         page_elapsed  = time.time() - page_start
