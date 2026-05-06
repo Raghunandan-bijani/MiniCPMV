@@ -1,7 +1,26 @@
-pymupdf>=1.23.0
-pytesseract>=0.3.10
-Pillow>=10.0.0
-openpyxl>=3.1.2
-opencv-python-headless>=4.8.0
-pdfplumber>=0.10.0
-numpy>=1.24.0
+---------------------------------------------------------------------------
+TypeError                                 Traceback (most recent call last)
+Cell In[8], line 12
+     10 # Determine output path
+     11 if OUTPUT_FILE:
+---> 12     out_path = Path(OUTPUT_FILE)
+     13 else:
+     14     suffix = ".xlsx" if OUTPUT_FORMAT == "xlsx" else ".csv"
+
+File ~\anaconda3\Lib\pathlib\_local.py:503, in Path.__init__(self, *args, **kwargs)
+    500     msg = ("support for supplying keyword arguments to pathlib.PurePath "
+    501            "is deprecated and scheduled for removal in Python {remove}")
+    502     warnings._deprecated("pathlib.PurePath(**kwargs)", msg, remove=(3, 14))
+--> 503 super().__init__(*args)
+
+File ~\anaconda3\Lib\pathlib\_local.py:132, in PurePath.__init__(self, *args)
+    130             path = arg
+    131         if not isinstance(path, str):
+--> 132             raise TypeError(
+    133                 "argument should be a str or an os.PathLike "
+    134                 "object where __fspath__ returns a str, "
+    135                 f"not {type(path).__name__!r}")
+    136         paths.append(path)
+    137 # Avoid calling super().__init__, as an optimisation
+
+TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'tuple'
