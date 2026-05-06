@@ -2,22 +2,23 @@
 #  CONFIGURATION — edit only this section
 # ============================================================
 IMAGE_PATH = r"C:/Users/Raghunandan/OneDrive/Desktop/Data_Engineer/Generative AI/Image_AI_application/debug.png"
-MIN_CELL_W = 15    # minimum cell width  in pixels
-MIN_CELL_H = 10    # minimum cell height in pixels
-MIN_GAP    = 10    # minimum gap between lines (dedup)
-DEBUG      = True  # show debug plots
+MIN_CELL_W  = 20    # minimum cell width  in pixels
+MIN_CELL_H  = 20    # minimum cell height in pixels
+MIN_GAP     = 25    # minimum gap between lines (dedup)
+DEBUG       = True  # show debug plots
 # ============================================================
 
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 
-# ─────────────────────────────────────────────────────────────
-# HELPER — Line positions from projection
-# ─────────────────────────────────────────────────────────────
-def get_line_positions(line_img, axis=1, threshold_pct=0.003):
+
+# -------------------------
+# HELPER: LINE POSITIONS
+# -------------------------
+def get_line_positions(line_img, axis=1):
     projection = np.sum(line_img > 0, axis=axis)
-    threshold  = max(np.max(projection) * threshold_pct, 2)
+    threshold  = max(np.max(projection) * 0.01, 2)   # lowered floor to 2
     lines, active, start = [], False, 0
     for i, val in enumerate(projection):
         if val > threshold and not active:
@@ -28,10 +29,10 @@ def get_line_positions(line_img, axis=1, threshold_pct=0.003):
     return lines
 
 
-# ─────────────────────────────────────────────────────────────
-# HELPER — Remove duplicate / close lines
-# ─────────────────────────────────────────────────────────────
-def remove_close_lines(lines, min_gap=10):
+# -------------------------
+# HELPER: REMOVE CLOSE LINES
+# -------------------------
+def remove_close_lines(lines, min_gap=15):
     cleaned = []
     for l in lines:
         if not cleaned or abs(l - cleaned[-1]) > min_gap:
@@ -39,46 +40,13 @@ def remove_close_lines(lines, min_gap=10):
     return cleaned
 
 
-# ─────────────────────────────────────────────────────────────
-# STRATEGY 2 — Multi-scale line detection
-# ─────────────────────────────────────────────────────────────
-def detect_lines_multiscale(binary, direction, img_h, img_w):
+# -------------------------
+# ENHANCEMENT 1: INFER MISSING LINES
+# -------------------------
+def infer_missing_lines(lines, axis="row"):
     """
-    Runs 3 kernel sizes and merges results.
-    Small  → weak/short lines
-    Medium → normal lines
-    Large  → strong/long lines
-    """
-    combined = np.zeros_like(binary)
-
-    if direction == "horizontal":
-        sizes      = [img_w // 100, img_w // 60, img_w // 30]
-        repair_k   = np.ones((1, 10), np.uint8)
-        kernels    = [cv2.getStructuringElement(cv2.MORPH_RECT, (max(s,2), 1)) for s in sizes]
-        close_k    = np.ones((1, 20), np.uint8)
-    else:
-        sizes      = [img_h // 100, img_h // 60, img_h // 30]
-        repair_k   = np.ones((10, 1), np.uint8)
-        kernels    = [cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(s,2))) for s in sizes]
-        close_k    = np.ones((20, 1), np.uint8)
-
-    for k in kernels:
-        repaired = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, repair_k)
-        detected = cv2.morphologyEx(repaired, cv2.MORPH_OPEN, k)
-        combined = cv2.bitwise_or(combined, detected)
-
-    combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, close_k)
-    combined = cv2.dilate(combined, np.ones((2, 2), np.uint8), iterations=1)
-    return combined
-
-
-# ─────────────────────────────────────────────────────────────
-# STRATEGY 3 — Infer missing lines from uniform spacing
-# ─────────────────────────────────────────────────────────────
-def infer_missing_lines(lines, img_size, axis="row"):
-    """
-    Detects median gap between lines.
-    If a gap is ~2x or ~3x the median, infers 1 or 2 missing lines.
+    Computes median gap between detected lines.
+    If a gap is ~2x or ~3x median → fills in 1 or 2 missing lines.
     """
     if len(lines) < 3:
         return lines
@@ -89,7 +57,7 @@ def infer_missing_lines(lines, img_size, axis="row"):
     if median_gap < 5:
         return lines
 
-    print(f"  [{axis}] Median gap: {median_gap}px | Detected: {len(lines)} lines")
+    print(f"  [{axis}] Median gap: {median_gap}px | Lines before inference: {len(lines)}")
 
     filled = [lines[0]]
     for i in range(len(lines) - 1):
@@ -98,12 +66,12 @@ def infer_missing_lines(lines, img_size, axis="row"):
         if 1.6 * median_gap < gap < 2.5 * median_gap:
             mid = (lines[i] + lines[i+1]) // 2
             filled.append(mid)
-            print(f"    Inferred 1 missing {axis} line at: {mid}px")
+            print(f"    Inferred 1 missing {axis} at: {mid}px")
 
         elif 2.5 * median_gap < gap < 3.5 * median_gap:
             filled.append(lines[i] + median_gap)
             filled.append(lines[i] + 2 * median_gap)
-            print(f"    Inferred 2 missing {axis} lines at: "
+            print(f"    Inferred 2 missing {axis}s at: "
                   f"{lines[i]+median_gap}px, {lines[i]+2*median_gap}px")
 
         filled.append(lines[i+1])
@@ -111,14 +79,14 @@ def infer_missing_lines(lines, img_size, axis="row"):
     return sorted(filled)
 
 
-# ─────────────────────────────────────────────────────────────
-# STRATEGY 4 — Recover rows from text projection
-# ─────────────────────────────────────────────────────────────
+# -------------------------
+# ENHANCEMENT 2: TEXT-BASED ROW RECOVERY
+# -------------------------
 def recover_rows_from_text(binary, existing_rows, img_h):
     """
-    Finds text bands (via horizontal projection).
+    Scans horizontal text projection to find text bands.
     Adds boundary lines around bands that have no detected row nearby.
-    Handles rows where the border line is completely absent.
+    Catches rows where the border line is completely absent in the image.
     """
     text_proj = np.sum(binary > 0, axis=1).astype(float)
     kernel    = np.ones(5) / 5
@@ -139,7 +107,7 @@ def recover_rows_from_text(binary, existing_rows, img_h):
     for start, end in zip(band_starts, band_ends):
         if not any(abs(r - start) < tolerance for r in existing_rows):
             new_rows.append(start)
-        if not any(abs(r - end)   < tolerance for r in existing_rows):
+        if not any(abs(r - end) < tolerance for r in existing_rows):
             new_rows.append(end)
 
     added = len(new_rows) - len(existing_rows)
@@ -149,13 +117,15 @@ def recover_rows_from_text(binary, existing_rows, img_h):
     return sorted(new_rows)
 
 
-# ─────────────────────────────────────────────────────────────
-# MAIN — Extract table cells
-# ─────────────────────────────────────────────────────────────
-def extract_table_cells(image_path, min_cell_w=15, min_cell_h=10,
-                        min_gap=10, debug=True):
+# -------------------------
+# MAIN FUNCTION
+# -------------------------
+def extract_table_cells(image_path, min_cell_w=20, min_cell_h=20,
+                        min_gap=25, debug=True):
 
-    # ── Load ──────────────────────────────────────────────
+    # -------------------------
+    # LOAD IMAGE
+    # -------------------------
     image = cv2.imread(image_path)
     if image is None:
         raise FileNotFoundError(f"Image not found: {image_path}")
@@ -164,11 +134,16 @@ def extract_table_cells(image_path, min_cell_w=15, min_cell_h=10,
     h, w = gray.shape
     print(f"Image loaded: {w} x {h} px")
 
-    # ── STRATEGY 1: CLAHE contrast enhancement ────────────
-    clahe  = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    gray   = clahe.apply(gray)
+    # -------------------------
+    # ENHANCEMENT: CLAHE contrast boost
+    # Boosts faint/faded lines before binarization
+    # -------------------------
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    gray  = clahe.apply(gray)
 
-    # ── Binarization ──────────────────────────────────────
+    # -------------------------
+    # BINARIZATION (your original)
+    # -------------------------
     binary = cv2.adaptiveThreshold(
         gray, 255,
         cv2.ADAPTIVE_THRESH_MEAN_C,
@@ -176,33 +151,86 @@ def extract_table_cells(image_path, min_cell_w=15, min_cell_h=10,
         15, 4
     )
 
-    # ── STRATEGY 2: Multi-scale line detection ─────────────
-    print("\nDetecting lines (multi-scale)...")
-    horizontal = detect_lines_multiscale(binary, "horizontal", h, w)
-    vertical   = detect_lines_multiscale(binary, "vertical",   h, w)
+    # -------------------------
+    # LINE DETECTION (your original kernels kept)
+    # -------------------------
+    horizontal_kernel = cv2.getStructuringElement(
+        cv2.MORPH_RECT, (w // 40, 1)
+    )
+    vertical_kernel = cv2.getStructuringElement(
+        cv2.MORPH_RECT, (1, h // 30)
+    )
 
-    # ── Raw line positions ─────────────────────────────────
-    raw_rows = get_line_positions(horizontal, axis=1, threshold_pct=0.003)
-    raw_cols = get_line_positions(vertical,   axis=0, threshold_pct=0.003)
-    raw_rows = remove_close_lines(raw_rows, min_gap=min_gap)
-    raw_cols = remove_close_lines(raw_cols, min_gap=min_gap)
-    print(f"  Raw rows: {len(raw_rows)} | Raw cols: {len(raw_cols)}")
+    # -------------------------
+    # ENHANCEMENT: Pre-repair gaps BEFORE morphologyEx
+    # Closes small breaks in lines before MORPH_OPEN strips them
+    # -------------------------
+    binary_h = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, np.ones((1, 15), np.uint8))
+    binary_v = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, np.ones((15, 1), np.uint8))
 
-    # ── STRATEGY 3: Infer missing lines ───────────────────
-    print("\nInferring missing lines...")
-    rows = infer_missing_lines(raw_rows, img_size=h, axis="row")
-    cols = infer_missing_lines(raw_cols, img_size=w, axis="col")
+    horizontal = cv2.morphologyEx(binary_h, cv2.MORPH_OPEN, horizontal_kernel)
+    vertical   = cv2.morphologyEx(binary_v, cv2.MORPH_OPEN, vertical_kernel)
 
-    # ── STRATEGY 4: Text-based row recovery ───────────────
-    print("\nRecovering rows from text projection...")
+    # -------------------------
+    # LINE REPAIR (your original)
+    # -------------------------
+    horizontal = cv2.morphologyEx(horizontal, cv2.MORPH_CLOSE, np.ones((1, 15), np.uint8))
+    vertical   = cv2.morphologyEx(vertical,   cv2.MORPH_CLOSE, np.ones((15, 1), np.uint8))
+
+    horizontal = cv2.dilate(horizontal, np.ones((3, 3), np.uint8), iterations=1)
+    vertical   = cv2.dilate(vertical,   np.ones((3, 3), np.uint8), iterations=1)
+
+    # -------------------------
+    # ENHANCEMENT: Second pass — smaller kernels merged
+    # Catches weaker lines your original kernel missed
+    # -------------------------
+    h_small = cv2.getStructuringElement(cv2.MORPH_RECT, (w // 80, 1))
+    v_small = cv2.getStructuringElement(cv2.MORPH_RECT, (1, h // 60))
+
+    h_pass2 = cv2.morphologyEx(binary_h, cv2.MORPH_OPEN, h_small)
+    v_pass2 = cv2.morphologyEx(binary_v, cv2.MORPH_OPEN, v_small)
+
+    h_pass2 = cv2.morphologyEx(h_pass2, cv2.MORPH_CLOSE, np.ones((1, 10), np.uint8))
+    v_pass2 = cv2.morphologyEx(v_pass2, cv2.MORPH_CLOSE, np.ones((10, 1), np.uint8))
+
+    # merge both passes — best of strong + weak detection
+    horizontal = cv2.bitwise_or(horizontal, h_pass2)
+    vertical   = cv2.bitwise_or(vertical,   v_pass2)
+
+    # -------------------------
+    # EXTRACT ROW / COL LINES (your original)
+    # -------------------------
+    rows = get_line_positions(horizontal, axis=1)
+    cols = get_line_positions(vertical,   axis=0)
+
+    # -------------------------
+    # REMOVE CLOSE DUPLICATES (your original)
+    # -------------------------
+    rows = remove_close_lines(rows, min_gap=min_gap)
+    cols = remove_close_lines(cols, min_gap=min_gap)
+
+    print(f"  After dedup — rows: {len(rows)} | cols: {len(cols)}")
+
+    # -------------------------
+    # ENHANCEMENT: Infer missing lines from spacing
+    # -------------------------
+    rows = infer_missing_lines(rows, axis="row")
+    cols = infer_missing_lines(cols, axis="col")
+
+    # -------------------------
+    # ENHANCEMENT: Text-based row recovery
+    # -------------------------
     rows = recover_rows_from_text(binary, rows, h)
 
-    # ── Final dedup ────────────────────────────────────────
+    # final dedup after enhancements
     rows = remove_close_lines(sorted(rows), min_gap=min_gap)
     cols = remove_close_lines(sorted(cols), min_gap=min_gap)
-    print(f"\nFinal rows: {len(rows)} | Final cols: {len(cols)}")
 
-    # ── Build cells ────────────────────────────────────────
+    print(f"  Final        — rows: {len(rows)} | cols: {len(cols)}")
+
+    # -------------------------
+    # BUILD CELLS (your original)
+    # -------------------------
     cells = []
     for i in range(len(rows) - 1):
         for j in range(len(cols) - 1):
@@ -212,39 +240,41 @@ def extract_table_cells(image_path, min_cell_w=15, min_cell_h=10,
             if cw > min_cell_w and ch > min_cell_h:
                 cells.append((x1, y1, cw, ch))
 
-    print(f"Total cells detected: {len(cells)}")
+    print(f"  Total cells  : {len(cells)}")
 
-    # ── Debug plots ────────────────────────────────────────
+    # -------------------------
+    # VISUALIZATION (your original + projection panel added)
+    # -------------------------
     if debug:
         vis_out = vis.copy()
         for (x, y, cw, ch) in cells:
             cv2.rectangle(vis_out, (x, y), (x+cw, y+ch), (0, 255, 0), 2)
         for y in rows:
-            cv2.line(vis_out, (0, y), (vis_out.shape[1], y), (0, 0, 255), 2)
+            cv2.line(vis_out, (0, y), (vis_out.shape[1], y), (255, 0, 0), 1)
         for x in cols:
-            cv2.line(vis_out, (x, 0), (x, vis_out.shape[0]), (255, 255, 0), 2)
+            cv2.line(vis_out, (x, 0), (x, vis_out.shape[0]), (0, 255, 255), 1)
 
-        # projection plot data
         h_proj = np.sum(horizontal > 0, axis=1)
 
         fig, axes = plt.subplots(2, 3, figsize=(24, 14))
 
-        axes[0,0].imshow(gray,        cmap="gray")
-        axes[0,0].set_title("1. CLAHE Enhanced Grayscale", fontsize=12)
+        axes[0,0].imshow(gray,       cmap="gray")
+        axes[0,0].set_title("1. CLAHE Enhanced Grayscale", fontsize=11)
 
-        axes[0,1].imshow(binary,      cmap="gray")
-        axes[0,1].set_title("2. Adaptive Binary", fontsize=12)
+        axes[0,1].imshow(binary,     cmap="gray")
+        axes[0,1].set_title("2. Binary (Adaptive Threshold)", fontsize=11)
 
-        axes[0,2].imshow(horizontal,  cmap="gray")
-        axes[0,2].set_title("3. Multi-scale Horizontal Lines", fontsize=12)
+        axes[0,2].imshow(horizontal, cmap="gray")
+        axes[0,2].set_title("3. Horizontal Lines (2-pass merged)", fontsize=11)
 
-        axes[1,0].imshow(vertical,    cmap="gray")
-        axes[1,0].set_title("4. Multi-scale Vertical Lines", fontsize=12)
+        axes[1,0].imshow(vertical,   cmap="gray")
+        axes[1,0].set_title("4. Vertical Lines (2-pass merged)", fontsize=11)
 
+        # projection plot — most useful for diagnosis
         axes[1,1].plot(h_proj, np.arange(len(h_proj)), color="steelblue", linewidth=1)
-        axes[1,1].set_title("5. Horizontal Projection\n(Red = detected row lines)", fontsize=12)
+        axes[1,1].set_title("5. Horizontal Projection\n(red = detected row lines)", fontsize=11)
         axes[1,1].set_xlabel("Pixel count")
-        axes[1,1].set_ylabel("Y position")
+        axes[1,1].set_ylabel("Y position (px)")
         for y in rows:
             axes[1,1].axhline(y=y, color="red", alpha=0.6, linewidth=0.8)
         axes[1,1].invert_yaxis()
@@ -252,28 +282,27 @@ def extract_table_cells(image_path, min_cell_w=15, min_cell_h=10,
 
         axes[1,2].imshow(cv2.cvtColor(vis_out, cv2.COLOR_BGR2RGB))
         axes[1,2].set_title(
-            f"6. Final Result\n"
-            f"Rows: {len(rows)} | Cols: {len(cols)} | Cells: {len(cells)}",
-            fontsize=12
+            f"6. Final Result — Cells: {len(cells)}\n"
+            f"Rows: {len(rows)} | Cols: {len(cols)}",
+            fontsize=11
         )
 
         for ax in axes.flat:
             ax.axis("off")
-        axes[1,1].axis("on")
+        axes[1,1].axis("on")   # keep projection plot axes visible
 
-        plt.suptitle("Table Cell Extraction — Debug View", fontsize=14, fontweight="bold", y=1.01)
+        plt.suptitle("Table Cell Extraction — Debug View", fontsize=14,
+                     fontweight="bold", y=1.01)
         plt.tight_layout()
         plt.show()
 
-        # ── Summary ─────────────────────────────────────────
+        # ── Summary ─────────────────────────────────────
         print("\n" + "="*45)
         print("  EXTRACTION SUMMARY")
         print("="*45)
         print(f"  Image size     : {w} x {h} px")
-        print(f"  Raw rows       : {len(raw_rows)}")
-        print(f"  Raw cols       : {len(raw_cols)}")
-        print(f"  Final rows     : {len(rows)}")
-        print(f"  Final cols     : {len(cols)}")
+        print(f"  Row lines      : {len(rows)}")
+        print(f"  Col lines      : {len(cols)}")
         print(f"  Total cells    : {len(cells)}")
         print(f"  Expected cells : {(len(rows)-1) * (len(cols)-1)}")
         print("="*45)
@@ -281,13 +310,13 @@ def extract_table_cells(image_path, min_cell_w=15, min_cell_h=10,
     return cells, rows, cols
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------
 # RUN
-# ─────────────────────────────────────────────────────────────
+# -------------------------
 cells, rows, cols = extract_table_cells(
-    image_path  = IMAGE_PATH,
-    min_cell_w  = MIN_CELL_W,
-    min_cell_h  = MIN_CELL_H,
-    min_gap     = MIN_GAP,
-    debug       = DEBUG
+    image_path = IMAGE_PATH,
+    min_cell_w = MIN_CELL_W,
+    min_cell_h = MIN_CELL_H,
+    min_gap    = MIN_GAP,
+    debug      = DEBUG
 )
