@@ -1,26 +1,45 @@
----------------------------------------------------------------------------
-TypeError                                 Traceback (most recent call last)
-Cell In[8], line 12
-     10 # Determine output path
-     11 if OUTPUT_FILE:
----> 12     out_path = Path(OUTPUT_FILE)
-     13 else:
-     14     suffix = ".xlsx" if OUTPUT_FORMAT == "xlsx" else ".csv"
+# ============================================================
+#  ✏️  CONFIGURATION  —  Edit these values before running
+# ============================================================
 
-File ~\anaconda3\Lib\pathlib\_local.py:503, in Path.__init__(self, *args, **kwargs)
-    500     msg = ("support for supplying keyword arguments to pathlib.PurePath "
-    501            "is deprecated and scheduled for removal in Python {remove}")
-    502     warnings._deprecated("pathlib.PurePath(**kwargs)", msg, remove=(3, 14))
---> 503 super().__init__(*args)
+# Path to your input PDF file
+# Windows example : r"C:\Users\YourName\Documents\report.pdf"
+# Linux / macOS   : "/home/yourname/documents/report.pdf"
+INPUT_PDF = r"C:/Users/Raghunandan/OneDrive/Desktop/Data_Engineer/Generative AI/single_page_output1.pdf"
 
-File ~\anaconda3\Lib\pathlib\_local.py:132, in PurePath.__init__(self, *args)
-    130             path = arg
-    131         if not isinstance(path, str):
---> 132             raise TypeError(
-    133                 "argument should be a str or an os.PathLike "
-    134                 "object where __fspath__ returns a str, "
-    135                 f"not {type(path).__name__!r}")
-    136         paths.append(path)
-    137 # Avoid calling super().__init__, as an optimisation
+# Where to save the output file (folder must exist)
+# Leave as None to save in the same folder as the PDF
+OUTPUT_FILE = r"C:/Users/Raghunandan/OneDrive/Desktop/Data_Engineer/Generative AI/Image_AI_application/PDF_Extractor",   # e.g. r"C:\Users\YourName\Desktop\output.xlsx"
 
-TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'tuple'
+# Output format: "xlsx"  or  "csv"
+OUTPUT_FORMAT = "xlsx"
+
+# Pages to process: "all"  or  "1,3,5"  or  "2-6"
+PAGES = "all"
+
+# OCR mode:
+#   "auto"  -> auto-detect (uses OCR only for scanned/image pages)
+#   "yes"   -> always use OCR  (use for scanned/photograph PDFs)
+#   "no"    -> never use OCR   (use for text-selectable PDFs only)
+OCR_MODE = "auto"
+
+# Rotation correction before OCR:
+#   "auto"  -> auto-detect and fix rotation
+#   "yes"   -> always correct rotation  (use for sideways scans)
+#   "no"    -> do not rotate
+ROTATE_MODE = "auto"
+
+# DPI for rendering scanned pages (higher = better quality, slower)
+# Recommended: 300 for normal, 400-500 for small/poor quality text
+DPI = 400
+
+# [Windows only] If Tesseract is installed but not found automatically,
+# set the full path here. Leave as None if Tesseract is in your PATH.
+TESSERACT_PATH = None   # e.g. r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+# ============================================================
+print("✅ Configuration loaded.")
+print(f"   Input  : {INPUT_PDF}")
+print(f"   Format : {OUTPUT_FORMAT.upper()}")
+print(f"   Pages  : {PAGES}")
+print(f"   OCR    : {OCR_MODE}  |  Rotate: {ROTATE_MODE}  |  DPI: {DPI}")
